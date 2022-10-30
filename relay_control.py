@@ -1,9 +1,28 @@
-from machine import Pin, Timer, I2C
+from machine import Pin, ADC, Timer, I2C
 from ssd1306 import SSD1306_I2C
 import framebuf
 import time
 import sys
 import micropython
+import network
+import socket
+import uasyncio as asyncio
+
+import secrets
+
+isPicoW_Cached = None
+
+def IsPicoW():
+  global isPicoW_Cached 
+  if isPicoW_Cached == None:
+    adc = ADC(3)
+    isPicoW_Cached = adc.read_u16() < 6553
+    if not isPicoW_Cached :
+      pin = Pin(25, Pin.OUT)
+      pin.low()
+      isPicoW_Cached = adc.read_u16() < 6553
+      pin.high()
+  return isPicoW_Cached
 
 micropython.alloc_emergency_exception_buf(100)
 
@@ -115,28 +134,121 @@ def re_arm(timr: Timer):
 
 def message_oled(message:str):
     oled.fill(0)
-    oled.text(message, 0, 0)
+    lines = message.split('\n')
+    for line_num, line in enumerate(lines):
+        oled.text(line, 0, 8*line_num)
     oled.show()
+
+status_image = '/images/invalid.jpg'
 
 def update_oled():
     """Update the graphic on the OLED according to relay status.
     """
 
+    global status_image
     if relay_state_1.value():
         if not relay_state_2.value():
             oled.blit(fbthru, 0, 0)
+            status_image = '/images/thru.jpg'
         else:
             oled.blit(fbinvalid, 0, 0)
+            status_image = '/images/invalid.jpg'
     else:
         if relay_state_2.value():
             oled.blit(fbcross, 0, 0)
+            status_image = '/images/cross.jpg'
         else:
             oled.blit(fbinvalid, 0, 0)
+            status_image = '/images/invalid.jpg'
     oled.show()
 
-message_oled("Relay controller")
+html = """<!DOCTYPE html>
+<html>
+    <head> <title>Pico W</title> </head>
+    <body> <h1>Pico W</h1>
+        <p>%s</p>
+    </body>
+</html>
+"""
+
+def get_file(file_name):
+    try:
+        with open(file_name, 'rb') as file:
+            return file.read()
+    except:
+        print (f"File open failed - {file_name}")
+        return None
+
+async def serve_client(reader, writer):
+    # print("Client connected")
+    request_line = await reader.readline()
+    print("Request:", request_line)
+    # We are not interested in HTTP request headers, skip them
+    while await reader.readline() != b"\r\n":
+        pass
+
+    request = str(request_line)
+
+    phrases = request.split(' ')
+    for i, phrase in enumerate(phrases):
+        print (f"{i=} {phrase=}////")
+
+    if phrases[0].find('GET') >= 0:
+        print (f'GET request -> {phrases[1]}')
+
+        # Catch image requests
+        if phrases[1].lower().endswith('.jpg'):
+            try:
+                response = get_file(phrases[1])
+                writer.write('HTTP/1.0 200 OK\r\nContent-type: image/jpeg\r\n\r\n')
+                writer.write(response)
+            except Exception as e:
+                print(e)
+
+        else:
+            thru = request.find('/relay/thru')
+            cross = request.find('/relay/cross')
+            # print( f"{thru=}, {cross=}")
+
+            stateis = ""
+            if thru == 6:
+                set_relay(RELAY_THRU)
+                print("Set realy to thru")
+                stateis = f'<img src="{status_image}">'
+            
+            if cross == 6:
+                set_relay(RELAY_CROSS)
+                print("Set realy to cross")
+                stateis = f'<img src="{status_image}">'
+                
+            response = html % stateis
+            writer.write('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
+            writer.write(response)
+
+    await writer.drain()
+    await writer.wait_closed()
+    print("Client disconnected")
+
+async def main():
+    while True:
+        update_oled()
+        await asyncio.sleep_ms(100)
+
+if IsPicoW():
+    message_oled("PicoW\nRelay controller")
+    wlan = network.WLAN(network.STA_IF)
+    print('Setting up webserver...')
+    asyncio.create_task(asyncio.start_server(serve_client, "0.0.0.0", 80))
+
+else:
+    message_oled("Pico\nRelay controller")
 time.sleep(2)
 
-while True:
-    update_oled()
-    time.sleep_ms(100)
+# while True:
+#     update_oled()
+#     time.sleep_ms(100)
+
+try:
+    asyncio.run(main())
+finally:
+    asyncio.new_event_loop()
