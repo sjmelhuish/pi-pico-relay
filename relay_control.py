@@ -4,8 +4,23 @@ import framebuf
 import time
 import sys
 import micropython
+import my_secrets
+from mqtt_as import MQTTClient, config
+import asyncio
+# from enum import Enum
+
+# Required on Pyboard D and ESP32. On ESP8266 these may be omitted (see above).
+config['ssid'] = 'Meltech'
+config['wifi_pw'] = my_secrets.PASSWORD
+config['server'] = my_secrets.MQTT_SERVER
+config['user'] = my_secrets.MQTT_USER
+config['password'] = my_secrets.MQTT_PASSWORD
 
 micropython.alloc_emergency_exception_buf(100)
+
+RELAY_STATE_INVALID = 0
+RELAY_STATE_THROUGH = 1
+RELAY_STATE_CROSS = 2
 
 RELAY_THRU = 1
 RELAY_CROSS = 2
@@ -16,6 +31,10 @@ FB_WIDTH = 128  # oled display width
 FB_HEIGHT = 64  # oled display height
 
 armed = True  # Respond to button pushes when armed
+mqtt_desired = None # The desired relay state
+mqtt_to_publish = None # Queued to publish to MQTT
+
+unit_number = 1 # Serial number for this relay
 
 # GPIO inputs to read relay state
 relay_state_1 = Pin(10, Pin.IN, Pin.PULL_UP)
@@ -69,6 +88,9 @@ def pushed_id(id: int):
     :param id: id of the button
     :type id: int
     """
+    global mqtt_desired
+
+    mqtt_desired = None
     set_relay(RELAY_THRU if id == 1 else RELAY_CROSS)
 
 
@@ -78,7 +100,7 @@ def set_relay(mode: int):
     :param mode: The desired relay mode.
     :type mode: int
     """
-    global armed
+    global armed, mqtt_to_publish
 
     if armed:
         if mode == RELAY_CROSS:
@@ -90,6 +112,8 @@ def set_relay(mode: int):
         pulse_timer.init(period=PULSE_TIME, mode=Timer.ONE_SHOT, callback=clear_relay)
         armed = False
         disarm_timer.init(period=DISARM_TIME, mode=Timer.ONE_SHOT, callback=re_arm)
+
+        mqtt_to_publish = mode
 
 
 def clear_relay(timr: Timer):
@@ -120,25 +144,87 @@ def message_oled(message:str):
         oled.text(line, 0, 8*line_num)
     oled.show()
 
-def update_oled():
+def read_relay():
+    if relay_state_1.value():
+        if not relay_state_2.value():
+            return RELAY_STATE_THROUGH
+        else:
+            return RELAY_STATE_INVALID
+    else:
+        if relay_state_2.value():
+            return RELAY_STATE_CROSS
+        else:
+            return RELAY_STATE_INVALID
+
+    
+def update_oled(relay_state):
     """Update the graphic on the OLED according to relay status.
     """
 
-    if relay_state_1.value():
-        if not relay_state_2.value():
-            oled.blit(fbthru, 0, 0)
-        else:
-            oled.blit(fbinvalid, 0, 0)
-    else:
-        if relay_state_2.value():
-            oled.blit(fbcross, 0, 0)
-        else:
-            oled.blit(fbinvalid, 0, 0)
+    fb_values = [fbinvalid, fbthru, fbcross]
+    oled.blit(fb_values[relay_state], 0, 0)
     oled.show()
 
-message_oled("Relay controller\nMQTT")
-time.sleep(2)
+async def messages(client):  # Respond to incoming messages
+    global mqtt_desired
 
-while True:
-    update_oled()
-    time.sleep_ms(100)
+    async for topic, msg, retained in client.queue:
+        print((topic, msg, retained))
+        # message_oled(f'MQTT -> {msg}')
+        mqtt_desired = int(msg.decode())
+
+async def up(client):  # Respond to connectivity being (re)established
+    while True:
+        await client.up.wait()  # Wait on an Event
+        client.up.clear()
+        await client.subscribe(f'radio_relay/{unit_number}/desired', 1)  # renew subscriptions
+
+async def mqtt_main(client):
+    global mqtt_desired
+
+    last_state = RELAY_STATE_INVALID
+
+    await client.connect()
+    message_oled("Relay controller\nMQTT Online")
+    await asyncio.sleep(1)
+    for coroutine in (up, messages):
+        asyncio.create_task(coroutine(client))
+    # n = 0
+    while True:
+        relay_state = read_relay()
+
+        if mqtt_desired is not None:
+            if mqtt_desired != relay_state: # Trigger relay if necessary
+                set_relay(mqtt_desired)
+            else: # Already in desired state
+                mqtt_desired = None # Ignore desired state from now
+
+        update_oled(relay_state)
+
+        if last_state != relay_state:
+            await client.publish(f'radio_relay/{unit_number}/state', f'{relay_state}', qos = 1)
+        last_state = relay_state
+        await asyncio.sleep(0.1)
+
+print('Starting')
+config["queue_len"] = 1  # Use event interface with default queue size
+print(config)
+MQTTClient.DEBUG = True  # Optional: print diagnostic messages
+client = MQTTClient(config)
+
+message_oled("Relay controller\nMQTT Starting")
+# time.sleep(2)
+
+try:
+    asyncio.run(mqtt_main(client))
+finally:
+    message_oled("Relay controller\nEnd")
+    client.close()  # Prevent LmacRxBlk:1 errors
+
+    # for key, value in config.items():
+    #     time.sleep(1)
+    #     message_oled(f'{key}=\n{value}')
+    
+# while True:
+#     update_oled()
+#     time.sleep_ms(100)
