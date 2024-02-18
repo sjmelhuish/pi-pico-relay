@@ -115,7 +115,9 @@ def re_arm(timr: Timer):
 
 def message_oled(message:str):
     oled.fill(0)
-    oled.text(message, 0, 0)
+    lines = message.split('\n')
+    for line_num, line in enumerate(lines):
+        oled.text(line, 0, 8*line_num)
     oled.show()
 
 def update_oled():
@@ -134,7 +136,7 @@ def update_oled():
             oled.blit(fbinvalid, 0, 0)
     oled.show()
 
-message_oled("Relay controller")
+message_oled("Relay controller\nMQTT")
 time.sleep(2)
 
 while True:
