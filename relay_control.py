@@ -10,7 +10,7 @@ import asyncio
 # from enum import Enum
 
 # Required on Pyboard D and ESP32. On ESP8266 these may be omitted (see above).
-config['ssid'] = 'Meltech'
+config['ssid'] = my_secrets.SSID
 config['wifi_pw'] = my_secrets.PASSWORD
 config['server'] = my_secrets.MQTT_SERVER
 config['user'] = my_secrets.MQTT_USER
