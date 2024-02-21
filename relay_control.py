@@ -199,7 +199,7 @@ async def mqtt_main(client):
             else: # Already in desired state
                 mqtt_desired = None # Ignore desired state from now
 
-        update_oled(relay_state)
+        # update_oled(relay_state)
 
         if last_state != relay_state:
             await client.publish(f'radio_relay/{unit_number}/state', f'{relay_state}', qos = 1)
@@ -213,18 +213,19 @@ MQTTClient.DEBUG = True  # Optional: print diagnostic messages
 client = MQTTClient(config)
 
 message_oled("Relay controller\nMQTT Starting")
-# time.sleep(2)
+
+async def relay_update_loop():
+    while True:
+        relay_state = read_relay()
+        update_oled(relay_state)
+        await asyncio.sleep_ms(100)
+
+message_oled("Pico\nRelay controller")
+time.sleep(2)
+
+mqtt_task = asyncio.create_task(mqtt_main(client))
 
 try:
-    asyncio.run(mqtt_main(client))
+    asyncio.run(relay_update_loop())
 finally:
-    message_oled("Relay controller\nEnd")
-    client.close()  # Prevent LmacRxBlk:1 errors
-
-    # for key, value in config.items():
-    #     time.sleep(1)
-    #     message_oled(f'{key}=\n{value}')
-    
-# while True:
-#     update_oled()
-#     time.sleep_ms(100)
+    asyncio.new_event_loop()
