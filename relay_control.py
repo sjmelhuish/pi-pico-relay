@@ -9,8 +9,6 @@ import my_secrets
 from mqtt_as import MQTTClient, config
 from ssd1306 import SSD1306_I2C
 
-# from enum import Enum
-
 # Required on Pyboard D and ESP32. On ESP8266 these may be omitted (see above).
 config["ssid"] = my_secrets.SSID
 config["wifi_pw"] = my_secrets.PASSWORD
@@ -28,39 +26,7 @@ RELAY_STATE_CROSS = 2
 RELAY_THRU = 1
 RELAY_CROSS = 2
 
-mqtt_desired = None  # The desired relay state
-# mqtt_to_publish = None  # Queued to publish to MQTT
-
 unit_number = 1  # Serial number for this relay
-
-
-class Button:
-    def __init__(self, relay):
-        self._relay = relay
-
-        # GPIO inputs for user control
-        self._button1 = Pin(20, Pin.IN, Pin.PULL_UP)
-        self._button2 = Pin(21, Pin.IN, Pin.PULL_UP)
-
-        # Button IRQs will instigate pulses
-        self._button1.irq(
-            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(1)
-        )
-        self._button2.irq(
-            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(2)
-        )
-
-    # IRQ handler for button push
-    def pushed_id(self, id: int):
-        """Respond to button push.
-
-        :param id: id of the button
-        :type id: int
-        """
-        global mqtt_desired
-
-        mqtt_desired = None
-        self._relay.set(RELAY_THRU if id == 1 else RELAY_CROSS)
 
 
 class Oled:
@@ -79,8 +45,6 @@ class Oled:
         self._oled = SSD1306_I2C(Oled.FB_WIDTH, Oled.FB_HEIGHT, i2c)
 
         self._oled_backoff = 0
-
-    # Here i will just write a really long comment line to see if the various formatters I have installed with bother themselves about dong anything to it. Hopefully they will turn it into something on several lines.
 
     _cross = bytearray(
         b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
@@ -290,9 +254,6 @@ class Oled:
             self._oled_backoff -= 1
 
 
-oled = Oled()
-
-
 class Relay:
     PULSE_TIME = const(50)
     DISARM_TIME = const(500)
@@ -320,14 +281,12 @@ class Relay:
         # Timer to re-enable relay pulses
         self._disarm_timer = Timer()
 
-    def set(self, mode):
+    def set(self, mode: int):
         """Set the relay to the chosen mode by sending a pulse.
 
         :param mode: The desired relay mode.
         :type mode: int
         """
-        # global buttons_armed
-        # , mqtt_to_publish
 
         if self._armed:
             if mode == RELAY_CROSS:
@@ -348,7 +307,6 @@ class Relay:
                 callback=self.re_arm,
             )
 
-            # mqtt_to_publish = mode
 
     def clear(self, timr: Timer):
         """Clear the relay drive output pins.
@@ -366,10 +324,10 @@ class Relay:
         :param timr: The timer that triggered this call.
         :type timr: Timer
         """
-        # global buttons_armed
+
         self._armed = True
 
-    def read(self):
+    def read(self) -> int:
         """Read the state of the relay.
 
         Returns:
@@ -388,11 +346,42 @@ class Relay:
                 return RELAY_STATE_INVALID
 
 
+class Button:
+    def __init__(self, relay: Relay):
+        self._relay = relay
+
+        # GPIO inputs for user control
+        self._button1 = Pin(20, Pin.IN, Pin.PULL_UP)
+        self._button2 = Pin(21, Pin.IN, Pin.PULL_UP)
+
+        # Button IRQs will instigate pulses
+        self._button1.irq(
+            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(1)
+        )
+        self._button2.irq(
+            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(2)
+        )
+
+    # IRQ handler for button push
+    def pushed_id(self, id: int):
+        """Respond to button push.
+
+        :param id: id of the button
+        :type id: int
+        """
+
+        self._relay.set(RELAY_THRU if id == 1 else RELAY_CROSS)
+
+
 class MqttRelay:
     def __init__(self, config, relay, oled):
         self._relay = relay
         self._oled = oled
+        self._desired = None
+        print ("Creating client object")
+        print (config)
         self._client = MQTTClient(config)
+        print (self._client)
         mqtt_task = asyncio.create_task(self.mqtt_main())
 
     async def mqtt_handler(self):
@@ -401,17 +390,13 @@ class MqttRelay:
         Args:
             client (MQTTClient): MQTT client object
         """
-        # global mqtt_desired
 
         async for topic, msg, retained in self._client.queue:
             print((topic, msg, retained))
             # message_oled(f'MQTT -> {msg}')
-            desired = int(msg.decode())
+            self._desired = int(msg.decode())
 
             # print(f"{relay_state} {mqtt_desired}")
-
-            if desired != self._relay.read():  # Trigger relay if necessary
-                self._relay.set(desired)
 
     async def mqtt_up(self):
         """Respond to connectivity being (re)established
@@ -434,10 +419,11 @@ class MqttRelay:
         Args:
             client (MQTTClient): MQTT client object
         """
-        # global mqtt_desired
 
         last_state = RELAY_STATE_INVALID
         try:
+            print ("Try to connect to MQTT")
+            print (self._client)
             await self._client.connect()
             print("Connected")
             oled.message("Relay controller\nMQTT Online")
@@ -445,23 +431,15 @@ class MqttRelay:
             await asyncio.sleep(1)  # noqa: E722
             for coroutine in (self.mqtt_up, self.mqtt_handler):
                 asyncio.create_task(coroutine())
-            # n = 0
+
             while True:
                 relay_state = self._relay.read()
 
-                # print(f"{relay_state} {mqtt_desired}")
-
-                # if self._mqtt_desired is not None:
-                #     if (
-                #         self._mqtt_desired != relay_state
-                #     ):  # Trigger relay if necessary
-                #         self._relay.set(self._mqtt_desired)
-                #     else:  # Already in desired state
-                #         self._mqtt_desired = (
-                #             None  # Ignore desired state from now
-                #         )
-
-                # update_oled(relay_state)
+                if self._desired:
+                    if self._desired != relay_state:  # Trigger relay if necessary
+                        self._relay.set(self._desired)
+                    else: # Otherwise clear the desired state
+                        self._desired = None
 
                 # Keep monitoring for relay state changes
 
@@ -479,9 +457,9 @@ class MqttRelay:
             self._oled.message("Relay controller\nMQTT Error")
 
 
+oled = Oled()
 relay = Relay()
 button = Button(relay)
-
 mqtt_relay = MqttRelay(config, relay, oled)
 
 # print('Starting')
@@ -500,8 +478,6 @@ async def relay_update_loop():
 
 oled.message("Pico\nRelay controller")
 time.sleep(2)
-
-# mqtt_task = asyncio.create_task(mqtt_main(client, relay))
 
 try:
     asyncio.run(relay_update_loop())
