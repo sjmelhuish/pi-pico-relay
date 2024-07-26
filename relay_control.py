@@ -82,15 +82,15 @@ class Relay:
     PULSE_TIME = const(50)
     DISARM_TIME = const(500)
 
-    def __init__(self):
+    def __init__(self, ind_pin_1: int, ind_pin_2: int, ctrl_pin_1: int, ctrl_pin_2: int, but_pin_1: int, but_pin_2: int):
         # GPIO inputs to read relay state
         # print("Creating Relay object")
-        self._relay_state_1 = Pin(10, Pin.IN, Pin.PULL_UP)
-        self._relay_state_2 = Pin(11, Pin.IN, Pin.PULL_UP)
+        self._relay_state_1 = Pin(ind_pin_1, Pin.IN, Pin.PULL_UP)
+        self._relay_state_2 = Pin(ind_pin_2, Pin.IN, Pin.PULL_UP)
 
         # GPIO outputs for relay control pulses
-        self._relay1 = Pin(14, Pin.OUT)
-        self._relay2 = Pin(15, Pin.OUT)
+        self._relay1 = Pin(ctrl_pin_1, Pin.OUT)
+        self._relay2 = Pin(ctrl_pin_2, Pin.OUT)
 
         # Clear relay control outputs
         self._relay1.value(0)
@@ -104,6 +104,29 @@ class Relay:
 
         # Timer to re-enable relay pulses
         self._disarm_timer = Timer()
+
+        # Configure user buttons
+        # GPIO inputs for user control
+        self._button1 = Pin(but_pin_1, Pin.IN, Pin.PULL_UP)
+        self._button2 = Pin(but_pin_2, Pin.IN, Pin.PULL_UP)
+
+        # Button IRQs will instigate pulses
+        self._button1.irq(
+            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(1)
+        )
+        self._button2.irq(
+            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(2)
+        )
+
+    # IRQ handler for button push
+    def pushed_id(self, id: int):
+        """Respond to button push.
+
+        :param id: id of the button
+        :type id: int
+        """
+
+        self.set(RELAY_THRU if id == 1 else RELAY_CROSS)
 
     def set(self, mode: int):
         """Set the relay to the chosen mode by sending a pulse.
@@ -169,35 +192,8 @@ class Relay:
                 return RELAY_STATE_INVALID
 
 
-class Button:
-    def __init__(self, relay: Relay):
-        self._relay = relay
-
-        # GPIO inputs for user control
-        self._button1 = Pin(20, Pin.IN, Pin.PULL_UP)
-        self._button2 = Pin(21, Pin.IN, Pin.PULL_UP)
-
-        # Button IRQs will instigate pulses
-        self._button1.irq(
-            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(1)
-        )
-        self._button2.irq(
-            trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(2)
-        )
-
-    # IRQ handler for button push
-    def pushed_id(self, id: int):
-        """Respond to button push.
-
-        :param id: id of the button
-        :type id: int
-        """
-
-        self._relay.set(RELAY_THRU if id == 1 else RELAY_CROSS)
-
-
 class MqttRelay:
-    def __init__(self, config, relay, oled):
+    def __init__(self, config, relay: Relay, oled: Oled):
         self._relay = relay
         self._oled = oled
         self._desired = None
@@ -283,8 +279,7 @@ class MqttRelay:
 
 
 oled = Oled(128, 64)
-relay = Relay()
-_ = Button(relay)
+relay = Relay(10, 11, 14, 15, 20, 21)
 mqtt_relay = MqttRelay(config, relay, oled)
 
 # print('Starting')
