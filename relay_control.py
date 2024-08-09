@@ -1,5 +1,6 @@
 import asyncio
 import time
+import json
 
 import framebuf
 import micropython
@@ -28,7 +29,7 @@ RELAY_STATE_CROSS = 2
 RELAY_THRU = 1
 RELAY_CROSS = 2
 
-unit_number = 1  # Serial number for this relay
+# unit_number = 1  # Serial number for this relay
 
 
 class Oled:
@@ -193,10 +194,12 @@ class Relay:
 
 
 class MqttRelay:
-    def __init__(self, config, relay: Relay, oled: Oled):
-        self._relay = relay
+    def __init__(self, config, relays: List[Relay], oled: Oled):
+        self._relays = relays
         self._oled = oled
-        self._desired = None
+        self._desired = [
+            None for _ in relays
+        ]
         print("Creating client object")
         print(config)
         self._client = MQTTClient(config)
@@ -213,7 +216,7 @@ class MqttRelay:
         async for topic, msg, retained in self._client.queue:
             print((topic, msg, retained))
             # message_oled(f'MQTT -> {msg}')
-            self._desired = int(msg.decode())
+            self._desired[0] = int(msg.decode())
 
             # print(f"{relay_state} {mqtt_desired}")
 
@@ -228,9 +231,10 @@ class MqttRelay:
             await self._client.up.wait()  # Wait on an Event
             self._client.up.clear()
 
-            await self._client.subscribe(
-                f"radio_relay/{unit_number}/desired", 1
-            )  # renew subscriptions
+            for i in range(1+len(self._relays)):
+                await self._client.subscribe(
+                    f"radio_relay/{i+1}/desired", 1
+                )  # renew subscriptions
 
     async def mqtt_main(self):
         """Main update loop to monitor the MQTT broker.
@@ -239,7 +243,10 @@ class MqttRelay:
             client (MQTTClient): MQTT client object
         """
 
-        last_state = RELAY_STATE_INVALID
+        # last_state = RELAY_STATE_INVALID
+        last_states = [
+            RELAY_STATE_INVALID for _ in self._relays
+        ]
         try:
             print("Try to connect to MQTT")
             print(self._client)
@@ -252,35 +259,52 @@ class MqttRelay:
                 asyncio.create_task(coroutine())
 
             while True:
-                relay_state = self._relay.read()
+                for index, relay in enumerate(self._relays):
+                    relay_state = relay.read()
 
-                if self._desired:
-                    if (
-                        self._desired != relay_state
-                    ):  # Trigger relay if necessary
-                        self._relay.set(self._desired)
-                    else:  # Otherwise clear the desired state
-                        self._desired = None
+                    if self._desired[index]:
+                        if (
+                            self._desired[index] != relay_state
+                        ):  # Trigger relay if necessary
+                            relay.set(self._desired)
+                        else:  # Otherwise clear the desired state
+                            self._desired[index] = None
 
-                # Keep monitoring for relay state changes
+                    # Keep monitoring for relay state changes
 
-                if last_state != relay_state:
-                    await self._client.publish(
-                        f"radio_relay/{unit_number}/state",
-                        f"{relay_state}",
-                        qos=1,
-                    )
-                last_state = relay_state
-                await asyncio.sleep(0.1)
+                    if last_states[index] != relay_state:
+                        await self._client.publish(
+                            f"radio_relay/{1+index}/state",
+                            f"{relay_state}",
+                            qos=1,
+                        )
+                    last_states[index] = relay_state
+                    await asyncio.sleep(0.1)
         except Exception as e:
             print("Exception")
             print(e)
             self._oled.message("Relay controller\nMQTT Error")
 
+# Load configuration
+with open("config.json") as f:
+    board_config = json.load(f)
 
-oled = Oled(128, 64)
-relay = Relay(10, 11, 14, 15, 20, 21)
-mqtt_relay = MqttRelay(config, relay, oled)
+# print (relay_config)
+# for relay in relay_config["relays"]:
+#     print(relay)
+
+relay_configs = board_config["relays"]
+
+oled = Oled(board_config["oled_width"], board_config["oled_height"])
+
+# relay = Relay(10, 11, 14, 15, 20, 21)
+# relay = Relay(**relays[0])
+
+relays = [
+    Relay(**relay_config) for relay_config in relay_configs
+]
+
+mqtt_relay = MqttRelay(config, relays, oled)
 
 # print('Starting')
 # print(config)

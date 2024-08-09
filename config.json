@@ -1,0 +1,14 @@
+{
+    "oled_width": 128,
+    "oled_height": 64
+    "relays": [
+        {
+            "ind_pin_1": 10,
+            "ind_pin_2": 11,
+            "ctrl_pin_1": 14,
+            "ctrl_pin_2": 15,
+            "but_pin_1": 20,
+            "but_pin_2": 21
+        }
+    ]
+}
