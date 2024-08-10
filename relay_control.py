@@ -65,12 +65,15 @@ class Oled:
             20  # This will prevent the next 20 graphical updates
         )
 
-    def update(self, relay_state: int):
+    def update(self, index: int, relay_state: int):
         """Update the graphic on the OLED according to relay status.
 
         Args:
+            index (int): Zero-based ordinal for relay
             relay_state (int): An integer describing the relay status
         """
+
+        # TODO: Make the index offset the blit location
 
         if self._oled_backoff <= 0:
             self._oled.blit(framebuffers[relay_state], 0, 0)
@@ -293,15 +296,15 @@ with open("config.json") as f:
 # for relay in relay_config["relays"]:
 #     print(relay)
 
-relay_configs = board_config["relays"]
-
 oled = Oled(board_config["oled_width"], board_config["oled_height"])
 
 # relay = Relay(10, 11, 14, 15, 20, 21)
 # relay = Relay(**relays[0])
 
+relay_configs = board_config["relays"]
+
 relays = [
-    Relay(**relay_config) for relay_config in relay_configs
+    Relay(**relay_config["pins"]) for relay_config in relay_configs
 ]
 
 mqtt_relay = MqttRelay(config, relays, oled)
@@ -315,8 +318,9 @@ oled.message("Relay controller\nMQTT Starting")
 async def relay_update_loop():
     """Loop to monitor relay state and update the OLED accordingly"""
     while True:
-        relay_state = relay.read()
-        oled.update(relay_state)
+        for i,relay in enumerate(relays):
+            relay_state = relay.read()
+            oled.update(i, relay_state)
         await asyncio.sleep_ms(100)
 
 
