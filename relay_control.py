@@ -86,15 +86,21 @@ class Relay:
     PULSE_TIME = const(50)
     DISARM_TIME = const(500)
 
-    def __init__(self, ind_pin_1: int, ind_pin_2: int, ctrl_pin_1: int, ctrl_pin_2: int, but_pin_1: int, but_pin_2: int):
+    # def __init__(self, topic, ind_pin_1: int, ind_pin_2: int, ctrl_pin_1: int, ctrl_pin_2: int, but_pin_1: int, but_pin_2: int):
+    def __init__(self, relay_config):
         # GPIO inputs to read relay state
-        # print("Creating Relay object")
-        self._relay_state_1 = Pin(ind_pin_1, Pin.IN, Pin.PULL_UP)
-        self._relay_state_2 = Pin(ind_pin_2, Pin.IN, Pin.PULL_UP)
+        print("Creating Relay object")
+
+        print(relay_config)
+
+        self.topic = relay_config["topic"]
+
+        self._relay_state_1 = Pin(relay_config["pins"]["ind_pin_1"], Pin.IN, Pin.PULL_UP)
+        self._relay_state_2 = Pin(relay_config["pins"]["ind_pin_2"], Pin.IN, Pin.PULL_UP)
 
         # GPIO outputs for relay control pulses
-        self._relay1 = Pin(ctrl_pin_1, Pin.OUT)
-        self._relay2 = Pin(ctrl_pin_2, Pin.OUT)
+        self._relay1 = Pin(relay_config["pins"]["ctrl_pin_1"], Pin.OUT)
+        self._relay2 = Pin(relay_config["pins"]["ctrl_pin_2"], Pin.OUT)
 
         # Clear relay control outputs
         self._relay1.value(0)
@@ -111,8 +117,8 @@ class Relay:
 
         # Configure user buttons
         # GPIO inputs for user control
-        self._button1 = Pin(but_pin_1, Pin.IN, Pin.PULL_UP)
-        self._button2 = Pin(but_pin_2, Pin.IN, Pin.PULL_UP)
+        self._button1 = Pin(relay_config["pins"]["but_pin_1"], Pin.IN, Pin.PULL_UP)
+        self._button2 = Pin(relay_config["pins"]["but_pin_2"], Pin.IN, Pin.PULL_UP)
 
         # Button IRQs will instigate pulses
         self._button1.irq(
@@ -139,6 +145,8 @@ class Relay:
         :type mode: int
         """
 
+        print(f"Relay.set({self.topic})")
+
         if self._armed:
             if mode == RELAY_CROSS:
                 self._relay1.value(0)
@@ -157,6 +165,8 @@ class Relay:
                 mode=Timer.ONE_SHOT,
                 callback=self.re_arm,
             )
+        # else:
+        #     print("Relay not armed")
 
     def clear(self, timr: Timer):
         """Clear the relay drive output pins.
@@ -219,9 +229,14 @@ class MqttRelay:
         async for topic, msg, retained in self._client.queue:
             print((topic, msg, retained))
             # message_oled(f'MQTT -> {msg}')
-            self._desired[0] = int(msg.decode())
+            # self._desired[0] = int(msg.decode())
 
             # print(f"{relay_state} {mqtt_desired}")
+
+            for index, relay in enumerate(self._relays):
+                if relay.topic+'/desired' == topic.decode('utf-8'):
+                    print (f"Topic matched to relay[{index}]")
+                    self._desired[index] = int(msg.decode())
 
     async def mqtt_up(self):
         """Respond to connectivity being (re)established
@@ -234,9 +249,10 @@ class MqttRelay:
             await self._client.up.wait()  # Wait on an Event
             self._client.up.clear()
 
-            for i in range(1+len(self._relays)):
+            # for i in range(1+len(self._relays)):
+            for relay in self._relays:
                 await self._client.subscribe(
-                    f"radio_relay/{i+1}/desired", 1
+                    f"{relay.topic}/desired", 1
                 )  # renew subscriptions
 
     async def mqtt_main(self):
@@ -269,7 +285,10 @@ class MqttRelay:
                         if (
                             self._desired[index] != relay_state
                         ):  # Trigger relay if necessary
-                            relay.set(self._desired)
+                            # print (f"desired {self._desired[index]} != state {relay_state}")
+                            # print (f"Set({self._desired[index]})")
+                            print (f"Set relay {index} - {relay.topic}")
+                            relay.set(self._desired[index])
                         else:  # Otherwise clear the desired state
                             self._desired[index] = None
 
@@ -277,7 +296,8 @@ class MqttRelay:
 
                     if last_states[index] != relay_state:
                         await self._client.publish(
-                            f"radio_relay/{1+index}/state",
+                            # f"radio_relay/{1+index}/state",
+                            f"{relay.topic}/state",
                             f"{relay_state}",
                             qos=1,
                         )
@@ -304,7 +324,8 @@ oled = Oled(board_config["oled_width"], board_config["oled_height"])
 relay_configs = board_config["relays"]
 
 relays = [
-    Relay(**relay_config["pins"]) for relay_config in relay_configs
+    # Relay(relay_config["topic"], **relay_config["pins"]) for relay_config in relay_configs
+    Relay(relay_config) for relay_config in relay_configs
 ]
 
 mqtt_relay = MqttRelay(config, relays, oled)
