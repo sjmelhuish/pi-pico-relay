@@ -6,7 +6,7 @@ import framebuf
 import micropython
 from machine import I2C, Pin, Timer
 
-from graphics import framebuffers
+# from graphics import framebuffers
 
 import my_secrets
 from mqtt_as import MQTTClient, config
@@ -28,6 +28,8 @@ RELAY_STATE_CROSS = 2
 
 RELAY_THRU = 1
 RELAY_CROSS = 2
+
+GRAPHICS_DIR = "Graphics"
 
 # unit_number = 1  # Serial number for this relay
 
@@ -76,7 +78,7 @@ class Oled:
         # TODO: Make the index offset the blit location
 
         if self._oled_backoff <= 0:
-            self._oled.blit(framebuffers[relay_state], 0, 0)
+            self._oled.blit(framebuffers[relay_state], 64*index, 0)
             self._oled.show()
         else:
             self._oled_backoff -= 1
@@ -307,6 +309,23 @@ class MqttRelay:
             print("Exception")
             print(e)
             self._oled.message("Relay controller\nMQTT Error")
+
+def load_framebuf(name: str) -> framebuf.FrameBuffer:
+    fbb = bytearray(b"\x00")
+    try:
+        with open(f"Graphics/{name}", 'rb') as f:
+            fbb = f.read()
+    except Exception as e:
+        print (f"Exception reading frame buffer {name}")
+        print (e)
+    print (f"Loading {name}")
+    return framebuf.FrameBuffer(bytearray(fbb), 64, 64, framebuf.MONO_HLSB)
+
+framebuffers = [
+    load_framebuf('HF_unknown.bin'), 
+    load_framebuf('HF_SDR.bin'), 
+    load_framebuf('HF_Rig.bin')
+    ]
 
 # Load configuration
 with open("config.json") as f:
