@@ -3,6 +3,28 @@
     "oled_height": 64,
     "relays": [
         {
+            "topic": "radio_relay/1",
+            "graphics": [
+                "HF_unknown.bin",
+                "HF_SDR.bin",
+                "HF_Rig.bin"
+            ],
+            "pins": {
+                "ind_pin_1": 8,
+                "ind_pin_2": 9,
+                "ctrl_pin_1": 12,
+                "ctrl_pin_2": 13,
+                "but_pin_1": 18,
+                "but_pin_2": 19
+            }
+        },
+        {
+            "topic": "radio_relay/2",
+            "graphics": [
+                "VHF_unknown.bin",
+                "VHF_SDR.bin",
+                "VHF_Rig.bin"
+            ],
             "pins": {
                 "ind_pin_1": 10,
                 "ind_pin_2": 11,

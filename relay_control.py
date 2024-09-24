@@ -67,18 +67,18 @@ class Oled:
             20  # This will prevent the next 20 graphical updates
         )
 
-    def update(self, index: int, relay_state: int):
+    def update(self, index: int, fb: framebuf.FrameBuffer):
         """Update the graphic on the OLED according to relay status.
 
         Args:
             index (int): Zero-based ordinal for relay
-            relay_state (int): An integer describing the relay status
+            fb (framebuf.FrameBuffer): A FrameBuffer providing the image to blit to the OLED
         """
 
         # TODO: Make the index offset the blit location
 
         if self._oled_backoff <= 0:
-            self._oled.blit(framebuffers[relay_state], 64*index, 0)
+            self._oled.blit(fb, 64*index, 0)
             self._oled.show()
         else:
             self._oled_backoff -= 1
@@ -96,6 +96,10 @@ class Relay:
         print(relay_config)
 
         self.topic = relay_config["topic"]
+
+        self.graphics = [
+            Relay.load_framebuf(name) for name in relay_config["graphics"]
+        ]
 
         self._relay_state_1 = Pin(relay_config["pins"]["ind_pin_1"], Pin.IN, Pin.PULL_UP)
         self._relay_state_2 = Pin(relay_config["pins"]["ind_pin_2"], Pin.IN, Pin.PULL_UP)
@@ -129,6 +133,18 @@ class Relay:
         self._button2.irq(
             trigger=Pin.IRQ_FALLING, handler=lambda a: self.pushed_id(2)
         )
+
+    @classmethod
+    def load_framebuf(cls, name: str) -> framebuf.FrameBuffer:
+        fbb = bytearray(b"\x00")
+        try:
+            with open(f"Graphics/{name}", 'rb') as f:
+                fbb = f.read()
+        except Exception as e:
+            print (f"Exception reading frame buffer {name}")
+            print (e)
+        print (f"Loading {name}")
+        return framebuf.FrameBuffer(bytearray(fbb), 64, 64, framebuf.MONO_HLSB)
 
     # IRQ handler for button push
     def pushed_id(self, id: int):
@@ -310,22 +326,12 @@ class MqttRelay:
             print(e)
             self._oled.message("Relay controller\nMQTT Error")
 
-def load_framebuf(name: str) -> framebuf.FrameBuffer:
-    fbb = bytearray(b"\x00")
-    try:
-        with open(f"Graphics/{name}", 'rb') as f:
-            fbb = f.read()
-    except Exception as e:
-        print (f"Exception reading frame buffer {name}")
-        print (e)
-    print (f"Loading {name}")
-    return framebuf.FrameBuffer(bytearray(fbb), 64, 64, framebuf.MONO_HLSB)
 
-framebuffers = [
-    load_framebuf('HF_unknown.bin'), 
-    load_framebuf('HF_SDR.bin'), 
-    load_framebuf('HF_Rig.bin')
-    ]
+# framebuffers = [
+#     load_framebuf('HF_unknown.bin'), 
+#     load_framebuf('HF_SDR.bin'), 
+#     load_framebuf('HF_Rig.bin')
+#     ]
 
 # Load configuration
 with open("config.json") as f:
@@ -360,7 +366,8 @@ async def relay_update_loop():
     while True:
         for i,relay in enumerate(relays):
             relay_state = relay.read()
-            oled.update(i, relay_state)
+            fb = relay.graphics[relay_state]
+            oled.update(i, fb)
         await asyncio.sleep_ms(100)
 
 
