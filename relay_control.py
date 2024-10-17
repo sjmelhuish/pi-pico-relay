@@ -23,11 +23,11 @@ config["queue_len"] = 1  # Use event interface with default queue size
 micropython.alloc_emergency_exception_buf(100)
 
 RELAY_STATE_INVALID = 0
-RELAY_STATE_THROUGH = 1
-RELAY_STATE_CROSS = 2
+RELAY_STATE_1 = 1
+RELAY_STATE_2 = 2
 
-RELAY_THRU = 1
-RELAY_CROSS = 2
+DESIRE_1 = 1
+DESIRE_2 = 2
 
 GRAPHICS_DIR = "Graphics"
 
@@ -75,8 +75,6 @@ class Oled:
             fb (framebuf.FrameBuffer): A FrameBuffer providing the image to blit to the OLED
         """
 
-        # TODO: Make the index offset the blit location
-
         if self._oled_backoff <= 0:
             self._oled.blit(fb, 64*index, 0)
             self._oled.show()
@@ -89,7 +87,7 @@ class Relay:
     DISARM_TIME = const(500)
 
     # def __init__(self, topic, ind_pin_1: int, ind_pin_2: int, ctrl_pin_1: int, ctrl_pin_2: int, but_pin_1: int, but_pin_2: int):
-    def __init__(self, relay_config):
+    def __init__(self, relay_config, graphic_width, graphic_height):
         # GPIO inputs to read relay state
         print("Creating Relay object")
 
@@ -98,7 +96,7 @@ class Relay:
         self.topic = relay_config["topic"]
 
         self.graphics = [
-            Relay.load_framebuf(name) for name in relay_config["graphics"]
+            Relay.load_framebuf(name, graphic_width, graphic_height) for name in relay_config["graphics"]
         ]
 
         self._relay_state_1 = Pin(relay_config["pins"]["ind_pin_1"], Pin.IN, Pin.PULL_UP)
@@ -135,7 +133,7 @@ class Relay:
         )
 
     @classmethod
-    def load_framebuf(cls, name: str) -> framebuf.FrameBuffer:
+    def load_framebuf(cls, name: str, graphic_width: int, graphic_height: int) -> framebuf.FrameBuffer:
         fbb = bytearray(b"\x00")
         try:
             with open(f"Graphics/{name}", 'rb') as f:
@@ -144,7 +142,7 @@ class Relay:
             print (f"Exception reading frame buffer {name}")
             print (e)
         print (f"Loading {name}")
-        return framebuf.FrameBuffer(bytearray(fbb), 64, 64, framebuf.MONO_HLSB)
+        return framebuf.FrameBuffer(bytearray(fbb), graphic_width, graphic_height, framebuf.MONO_HLSB)
 
     # IRQ handler for button push
     def pushed_id(self, id: int):
@@ -154,7 +152,7 @@ class Relay:
         :type id: int
         """
 
-        self.set(RELAY_THRU if id == 1 else RELAY_CROSS)
+        self.set(DESIRE_1 if id == 1 else DESIRE_2)
 
     def set(self, mode: int):
         """Set the relay to the chosen mode by sending a pulse.
@@ -163,10 +161,10 @@ class Relay:
         :type mode: int
         """
 
-        print(f"Relay.set({self.topic})")
+        # print(f"Relay.set({self.topic}), armed = {self._armed}, mode = {mode}")
 
         if self._armed:
-            if mode == RELAY_CROSS:
+            if mode == DESIRE_2:
                 self._relay1.value(0)
                 self._relay2.value(1)
             else:
@@ -209,17 +207,18 @@ class Relay:
         """Read the state of the relay.
 
         Returns:
-            int: The relays status: 0 (invalid), 1 (through) or 2 (cross)
+            int: The relays status: 0 (RELAY_STATE_INVALID), 1 (RELAY_STATE_1) or 2 (RELAY_STATE_2)
         """
 
+        # The relay indicators pull down, so 0 is set
         if self._relay_state_1.value():
             if not self._relay_state_2.value():
-                return RELAY_STATE_THROUGH
+                return RELAY_STATE_2
             else:
                 return RELAY_STATE_INVALID
         else:
             if self._relay_state_2.value():
-                return RELAY_STATE_CROSS
+                return RELAY_STATE_1
             else:
                 return RELAY_STATE_INVALID
 
@@ -305,7 +304,7 @@ class MqttRelay:
                         ):  # Trigger relay if necessary
                             # print (f"desired {self._desired[index]} != state {relay_state}")
                             # print (f"Set({self._desired[index]})")
-                            print (f"Set relay {index} - {relay.topic}")
+                            # print (f"Set relay {index} - {relay.topic}")
                             relay.set(self._desired[index])
                         else:  # Otherwise clear the desired state
                             self._desired[index] = None
@@ -322,7 +321,7 @@ class MqttRelay:
                     last_states[index] = relay_state
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print("Exception")
+            print("Exception in mqtt_main")
             print(e)
             self._oled.message("Relay controller\nMQTT Error")
 
@@ -348,9 +347,12 @@ oled = Oled(board_config["oled_width"], board_config["oled_height"])
 
 relay_configs = board_config["relays"]
 
+graphic_width = board_config["oled_width"]//len(relay_configs)
+graphic_height = board_config["oled_height"]
+
 relays = [
     # Relay(relay_config["topic"], **relay_config["pins"]) for relay_config in relay_configs
-    Relay(relay_config) for relay_config in relay_configs
+    Relay(relay_config, graphic_width, graphic_height) for relay_config in relay_configs
 ]
 
 mqtt_relay = MqttRelay(config, relays, oled)

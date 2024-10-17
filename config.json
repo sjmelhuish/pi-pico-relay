@@ -5,9 +5,9 @@
         {
             "topic": "radio_relay/1",
             "graphics": [
-                "HF_unknown.bin",
-                "HF_SDR.bin",
-                "HF_Rig.bin"
+                "VHF_unknown_single.bin",
+                "VHF_SDR_single.bin",
+                "VHF_Rig_single.bin"
             ],
             "pins": {
                 "ind_pin_1": 8,
@@ -16,22 +16,6 @@
                 "ctrl_pin_2": 13,
                 "but_pin_1": 18,
                 "but_pin_2": 19
-            }
-        },
-        {
-            "topic": "radio_relay/2",
-            "graphics": [
-                "VHF_unknown.bin",
-                "VHF_SDR.bin",
-                "VHF_Rig.bin"
-            ],
-            "pins": {
-                "ind_pin_1": 10,
-                "ind_pin_2": 11,
-                "ctrl_pin_1": 14,
-                "ctrl_pin_2": 15,
-                "but_pin_1": 20,
-                "but_pin_2": 21
             }
         }
     ]
